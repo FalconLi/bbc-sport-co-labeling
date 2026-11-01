@@ -243,7 +243,7 @@
   facts.forEach(([label, value]) => $('experiment-facts').append(el('dt', '', label), el('dd', '', value)));
   const fits = report.runs.flatMap(run => methods.map(method => run.methods[method].solver));
   const fitCount = fits.reduce((sum, item) => sum + item.fits, 0), converged = fits.reduce((sum, item) => sum + item.converged, 0);
-  $('solver-note').textContent = fitCount === converged ? 'All recorded optimization fits reached the requested numerical tolerance.' : `${converged} of ${fitCount} recorded optimization fits reached the requested numerical tolerance; the others reached the iteration limit. See REPRODUCTION.md for the numerical settings and limits.`;
+  $('solver-note').textContent = fitCount === converged ? 'All recorded optimization fits reached the requested numerical tolerance.' : `${converged} of ${fitCount} recorded optimization fits reached the requested numerical tolerance; the others reached the iteration limit.`;
   $('run-caption').textContent = `${report.config.runs} measured ${report.config.runs === 1 ? 'run' : 'runs'} · replay seed ${data.recording_seed}`;
   $('notes-button').addEventListener('click', () => { const notes = $('presenter-notes'); notes.hidden = !notes.hidden; $('notes-button').setAttribute('aria-expanded', String(!notes.hidden)); });
   $('fullscreen').addEventListener('click', async () => {

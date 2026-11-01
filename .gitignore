@@ -10,3 +10,7 @@ __pycache__/
 .env.*
 *.log
 demo/local-data.js
+
+# Keep Markdown notes local; publish only the root README.
+*.md
+!/README.md

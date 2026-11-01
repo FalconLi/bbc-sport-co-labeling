@@ -1,4 +1,4 @@
-"""Serve the offline classroom demo using only Python's standard library."""
+"""Serve the BBCSport demo using only Python's standard library."""
 
 from __future__ import annotations
 
@@ -45,13 +45,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def log_message(self, format, *args):
-        # Keep the presentation terminal quiet; errors remain visible.
+        # Keep the demo terminal quiet; errors remain visible.
         if args and str(args[1] if len(args) > 1 else "").startswith(("4", "5")):
             super().log_message(format, *args)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Open the offline BBCSport presentation demo.")
+    parser = argparse.ArgumentParser(description="Open the BBCSport demo.")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
@@ -65,7 +65,7 @@ def main():
             raise SystemExit(f"Port {args.port} is unavailable. Try: python run_demo.py --port {args.port + 1}") from error
         raise SystemExit(f"Could not start the local demo: {error}") from error
     url = f"http://127.0.0.1:{args.port}"
-    print(f"\nBBCSport presentation demo: {url}", flush=True)
+    print(f"\nBBCSport demo: {url}", flush=True)
     print("Runs offline using saved, real predictions. Press Ctrl+C to stop.\n", flush=True)
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()
