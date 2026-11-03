@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="An offline demonstration of learning from ten labeled BBCSport articles, with real co-labeling results.">
+  <title>Ten answers · BBCSport co-labeling</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="demo-data.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a href="#start" class="brand" aria-label="BBCSport demo home"><span class="brand-mark">10</span><span>TEN ANSWERS<span class="brand-sub">A co-labeling experiment</span></span></a>
+    <div class="header-actions"><span class="offline-dot">Works offline</span><button id="fullscreen" class="button quiet" type="button">Full screen</button></div>
+  </header>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="eyebrow">THE DEMONSTRATION</div>
+      <nav aria-label="Presentation chapters">
+        <button class="chapter active" data-chapter="start" aria-current="step"><span>01</span>Start small</button>
+        <button class="chapter" data-chapter="learn"><span>02</span>Watch learning</button>
+        <button class="chapter" data-chapter="article"><span>03</span>Try an article</button>
+        <button class="chapter" data-chapter="results"><span>04</span>Compare results</button>
+      </nav>
+      <div class="sidebar-caption">Real BBCSport data.<br>Real model predictions.<br>A saved training replay.</div>
+      <div class="sidebar-bottom"><span id="run-caption">Loading recording…</span><button id="notes-button" class="button quiet" type="button" aria-expanded="false">Presenter notes</button></div>
+    </aside>
+    <main id="main">
+      <section class="page" data-page="start">
+        <div class="eyebrow">01 / THE STARTING POINT</div>
+        <h1>Hundreds of articles.<br>Just ten answers.</h1>
+        <p class="lead">Can two computer readers help each other learn which sport an article is about?</p>
+        <div class="data-journey" aria-label="370 training articles: 10 have supplied answers, 360 have hidden answers. Another 367 articles are reserved for testing.">
+          <div><strong>10</strong><span>articles with answers</span><small>Two for each sport</small></div>
+          <span class="journey-symbol" aria-hidden="true">+</span>
+          <div><strong>360</strong><span>articles without answers</span><small>Available for learning</small></div>
+          <span class="journey-symbol" aria-hidden="true">→</span>
+          <div><strong>367</strong><span>new test articles</span><small>Kept out of training</small></div>
+        </div>
+        <div class="section-heading"><h2>The ten answers we supplied</h2><span class="muted">Everything else starts hidden.</span></div>
+        <div id="known-examples" class="known-examples"></div>
+        <div class="page-action"><button class="button primary" type="button" data-go="learn">Watch the readers learn <span aria-hidden="true">→</span></button><span class="muted">No training or internet needed during the presentation.</span></div>
+      </section>
+
+      <section class="page" data-page="learn" hidden>
+        <div class="eyebrow">02 / REPLAY OF ACTUAL TRAINING</div>
+        <h1>Different clues.<br>Better-informed guesses.</h1>
+        <p class="lead">The readers see different groups of words. They exchange several possible answer sheets, then learn how to combine them.</p>
+        <div class="replay-controls">
+          <div><span class="eyebrow">CURRENT ROUND</span><strong id="round-number" class="round-number">0</strong><span id="round-context" class="muted"></span></div>
+          <div class="button-group"><button id="round-back" class="button" type="button">Back</button><button id="round-play" class="button" type="button" aria-pressed="false">Play</button><button id="round-next" class="button primary" type="button">Next round →</button><button id="round-reset" class="button quiet" type="button">Restart</button></div>
+        </div>
+        <div class="readers-flow">
+          <div class="reader-panel"><span class="reader-id reader-a">A</span><h2>Reader A</h2><p>Sees one group of 2,306 words</p><span id="a-changes" class="reader-detail"></span></div>
+          <div class="exchange" aria-label="The readers exchange alternative answer sheets"><span>Possible answer sheets</span><svg viewBox="0 0 140 46" aria-hidden="true"><path d="M4 12H132M121 3L132 12 121 21M136 34H8M19 25L8 34 19 43"/></svg><small>Share · learn · repeat</small></div>
+          <div class="reader-panel"><span class="reader-id reader-b">B</span><h2>Reader B</h2><p>Sees the other 2,307 words</p><span id="b-changes" class="reader-detail"></span></div>
+        </div>
+        <div class="learning-readout" aria-live="polite"><span id="changed-readout"></span><span id="round-score"></span></div>
+        <div class="section-heading"><h2>Guesses for articles without answers</h2><span class="muted">A fixed sample of 60 training articles. Select one to inspect it.</span></div>
+        <div id="article-grid" class="article-grid" aria-label="Predicted sports for 60 unlabeled training articles"></div>
+        <div id="sport-legend" class="sport-legend"></div>
+        <div class="section-heading sheets-heading"><h2>Inside the alternative answer sheets</h2><div class="sheet-controls"><label>Sport <select id="focus-category"></select></label><label>Receiving reader <select id="focus-view"><option value="0">A</option><option value="1">B</option></select></label></div></div>
+        <p id="sheet-explanation" class="muted"></p>
+        <div id="candidate-sheets"></div>
+        <div class="page-action"><button class="button" type="button" data-go="article">Try an article kept out of training →</button></div>
+      </section>
+
+      <section class="page" data-page="article" hidden>
+        <div class="eyebrow" id="article-page-eyebrow">03 / AN ARTICLE THE READERS HAVE NOT PRACTICED ON</div>
+        <h1>What do the readers think?</h1>
+        <p class="lead" id="article-page-lead">Choose a new test article. Compare the starting guess with the learned prediction, then reveal its answer.</p>
+        <div class="article-picker"><label for="article-select">Article</label><select id="article-select"></select><button id="changed-example" class="button" type="button">Find a changed guess</button></div>
+        <article class="selected-article"><div id="article-role" class="eyebrow"></div><h2 id="article-title">Loading article…</h2><p id="article-excerpt" class="article-excerpt"></p></article>
+        <div class="word-views"><div><span class="reader-id reader-a">A</span><h3>Words Reader A can see</h3><div id="words-a" class="word-list"></div></div><div><span class="reader-id reader-b">B</span><h3>Words Reader B can see</h3><div id="words-b" class="word-list"></div></div></div>
+        <p class="word-note muted">These are frequent words available to each reader. The original dataset shortens some words.</p>
+        <div class="prediction-comparison"><div><span class="eyebrow">AT THE START</span><h2 id="prediction-before"></h2><p>Only the ten supplied answers</p></div><span class="prediction-arrow" aria-hidden="true">→</span><div><span class="eyebrow">AFTER LEARNING</span><h2 id="prediction-after"></h2><p id="individual-predictions"></p></div></div>
+        <div class="answer-reveal"><button id="reveal-answer" class="button primary" type="button">Reveal the real answer</button><span id="real-answer" aria-live="polite"></span></div>
+        <div class="page-action"><button class="button" type="button" data-go="results">See the measured comparison →</button></div>
+      </section>
+
+      <section class="page" data-page="results" hidden>
+        <div class="eyebrow">04 / THE MEASURED COMPARISON</div>
+        <h1>Did the extra learning help?</h1>
+        <p class="lead">A good ranking puts articles about the requested sport near the top. We average this ranking score across all five sports.</p>
+        <div class="results-caption"><h2>Our implementation</h2><span id="results-runs" class="muted"></span></div>
+        <div id="our-results" class="results-chart" role="img"></div>
+        <div class="chart-axis"><span>0</span><span>25</span><span>50</span><span>75</span><span>100</span></div>
+        <p class="axis-label">Ranking score out of 100 (MAP) · higher is better</p>
+        <p class="metric-note">A ranking score of 95 does not mean 95% of articles were classified correctly.</p>
+        <details class="results-detail"><summary>How often was the predicted category correct?</summary><div id="accuracy-results"></div><p class="muted">This is classification accuracy, a separate measure. The paper's table reports ranking scores.</p></details>
+        <details class="results-detail"><summary>Compare with the paper's published scores</summary><div id="paper-results" class="results-chart"></div><p class="muted">Published Table 3 means across 10 splits. Our random splits and some unspecified settings differ, so these are separate experiments.</p></details>
+        <details class="results-detail"><summary>How was this experiment run?</summary><dl id="experiment-facts" class="experiment-facts"></dl><p class="muted">No test answers enter training or parameter selection. The replay uses the first predeclared seed, rather than selecting the best-looking run.</p><p id="solver-note" class="muted"></p></details>
+        <p class="citation">Based on Xinxing Xu, Wen Li, Dong Xu & Ivor W. Tsang, <em>Co-Labeling for Multi-View Weakly Labeled Learning</em>, TPAMI 2016. <a href="https://doi.org/10.1109/TPAMI.2015.2476813" target="_blank" rel="noreferrer">Paper ↗</a><br>BBCSport dataset: Derek Greene & Pádraig Cunningham, ICML 2006. Source articles © BBC.</p>
+        <div class="page-action"><button class="button" type="button" data-go="start">Back to the beginning</button></div>
+      </section>
+    </main>
+  </div>
+  <aside id="presenter-notes" class="presenter-notes" hidden><h2>A one-minute explanation</h2><ol><li><strong>Start:</strong> “We give the computer only two answers for each sport.”</li><li><strong>Learn:</strong> “Two readers see different words. They keep several guesses, because one guess can be wrong.”</li><li><strong>Try:</strong> “This article was kept out of training. Let's reveal whether the learned answer is right.”</li><li><strong>Compare:</strong> “These bars are our measured ranking scores. The paper's scores are shown separately.”</li></ol><p>Keyboard: 1–4 changes chapters. Left/right changes training rounds in chapter 2. Space plays or pauses the replay.</p></aside>
+  <div id="fatal-error" class="fatal-error" role="alert" hidden></div>
+</body>
+</html>

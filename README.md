@@ -39,7 +39,14 @@ python -m pytest -q  # Check the numerical implementation and saved results.
 
 ## 3. Demo
 
-**Preparation:** finish setup and the training command above. `--export-demo` saves the real results in `demo/demo-data.js` for offline playback. A completed recording is also included in the repository.
+**Preparation:** a completed animation is included. To regenerate it after training, run:
+
+```sh
+python -m pip install -r requirements-presentation.txt  # Install the optional video and chart tools.
+python render_presentation.py                          # Export the 90-second animation and results chart.
+```
+
+The export uses saved predictions and observes one focused calculation through the unchanged solver. It does not repeat the ten-run experiment. The MP4 and chart are saved in `demo/`.
 
 **Run:** on macOS, double-click **`start_demo.command`**, or run these commands from the repository:
 
@@ -48,7 +55,7 @@ source .venv/bin/activate  # Activate the environment in this Terminal.
 python run_demo.py        # Start the local demo and open the browser.
 ```
 
-Open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** if the browser does not open automatically. The demo replays saved training rounds, lets you inspect articles and reveal answers, and compares results. No training or internet is needed to use the demo. Keep the Terminal open; press **Ctrl+C** there to stop.
+Open **[http://127.0.0.1:8765](http://127.0.0.1:8765)** if the browser does not open automatically. Use **Play**, **Pause**, **Restart**, or the scene buttons. The animation follows real predictions, exchanged sheets, and learned weights. **Explore the saved data** opens the detailed explorer. Keep the Terminal open; press **Ctrl+C** there to stop.
 
 ## 4. Dataset and attribution
 
