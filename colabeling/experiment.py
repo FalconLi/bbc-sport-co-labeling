@@ -11,11 +11,11 @@ from importlib.metadata import version
 from pathlib import Path
 
 import numpy as np
-from sklearn.metrics import accuracy_score, average_precision_score
 from threadpoolctl import threadpool_limits
 
 from .data import ARCHIVES, CATEGORIES, BBCSport, make_split
 from .models import fit_colabeling, fit_cotraining, fit_supervised
+from .metrics import classification_metrics
 
 METHODS = ["supervised", "cotraining", "colabel_flat", "colabel_grouped"]
 METHOD_NAMES = {
@@ -42,16 +42,8 @@ class ExperimentConfig:
     tolerance: float = 1e-5
 
 
-def evaluate(answers, view_scores):
-    scores = np.mean(view_scores, axis=0)
-    per_class = [average_precision_score(answers == category, scores[:, category]) * 100 for category in range(5)]
-    return {
-        "map": float(np.mean(per_class)), "ap_by_class": [float(x) for x in per_class],
-        "accuracy": float(accuracy_score(answers, scores.argmax(axis=1)) * 100),
-        "map_by_view": [float(np.mean([
-            average_precision_score(answers == category, view[:, category]) * 100 for category in range(5)
-        ])) for view in view_scores],
-    }
+def evaluate(answers, view_scores, classes=None):
+    return classification_metrics(answers, view_scores, classes)
 
 
 def run_experiment(dataset: BBCSport, config: ExperimentConfig, output_dir: Path):

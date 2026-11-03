@@ -1,4 +1,4 @@
-"""Two-view classifiers. Training interfaces never receive hidden/test answers."""
+"""Experiment adapters and conventional baselines over arbitrary view/class counts."""
 
 from __future__ import annotations
 
@@ -8,25 +8,40 @@ from typing import Callable
 import numpy as np
 from sklearn.svm import SVC
 
-from .solver import fit_mkl, project_labels
+from .estimator import CoLabelingClassifier
+from .kernels import validate_views
 
 
 @dataclass
 class LearningRun:
-    # One entry per round; scores have shape [view, article, category].
+    # One entry per round; scores have shape [view, sample, category].
     train_scores: list[np.ndarray]
     test_scores: list[np.ndarray]
     details: list[dict]
+    model: CoLabelingClassifier | None = None
+
+
+def _inputs(train_views, test_views, supplied):
+    train_views = validate_views(train_views)
+    test_views = validate_views(test_views, [x.shape[1] for x in train_views])
+    supplied = np.asarray(supplied)
+    if supplied.shape != (train_views[0].shape[0],) or supplied.dtype.kind not in "iu":
+        raise ValueError("The experiment adapter needs integer labels and -1 for unknown labels.")
+    classes = np.unique(supplied[supplied >= 0])
+    if len(classes) < 2 or np.any(supplied < -1):
+        raise ValueError("At least two known classes are needed; only -1 denotes an unknown label.")
+    return train_views, test_views, supplied, classes
 
 
 def _supervised_views(train_views, test_views, supplied, c):
+    train_views, test_views, supplied, classes = _inputs(train_views, test_views, supplied)
     mask = supplied >= 0
-    train_scores = np.empty((2, len(supplied), 5))
-    test_scores = np.empty((2, len(test_views[0]), 5))
-    for view in range(2):
-        for category in range(5):
+    train_scores = np.empty((len(train_views), len(supplied), len(classes)))
+    test_scores = np.empty((len(train_views), test_views[0].shape[0], len(classes)))
+    for view in range(len(train_views)):
+        for category, label in enumerate(classes):
             classifier = SVC(C=c, kernel="linear")
-            answers = np.where(supplied[mask] == category, 1, -1)
+            answers = np.where(supplied[mask] == label, 1, -1)
             classifier.fit(train_views[view][mask], answers)
             train_scores[view, :, category] = classifier.decision_function(train_views[view])
             test_scores[view, :, category] = classifier.decision_function(test_views[view])
@@ -35,27 +50,29 @@ def _supervised_views(train_views, test_views, supplied, c):
 
 def fit_supervised(train_views, test_views, supplied, *, c=10.0) -> LearningRun:
     train, test = _supervised_views(train_views, test_views, supplied, c)
-    return LearningRun([train], [test], [{"round": 0, "known_answers": int((supplied >= 0).sum())}])
+    return LearningRun([train], [test], [{"round": 0, "known_answers": int((np.asarray(supplied) >= 0).sum())}])
 
 
 def fit_cotraining(train_views, test_views, supplied, *, c=10.0, rounds=10, batch=5) -> LearningRun:
-    """Classical confident-sample exchange baseline, five per binary class/view.
+    """Confident-sample exchange baseline; other views' scores are averaged.
 
-    At each round, teacher ranks its student's still-unassigned articles and
-    supplies the highest/lowest five as positive/negative. Labels accumulate;
-    the original ten human answers are never changed. This selection policy
-    is explicit because the journal paper does not fully specify its baseline.
+    Each teacher set supplies the highest/lowest batch still-unassigned examples
+    per binary class. With two views this is exactly the original BBCSport
+    selection policy, which the paper does not specify in full.
     """
-    n, nt = len(supplied), len(test_views[0])
-    assigned = np.zeros((2, 5, n), dtype=np.int8)
+    train_views, test_views, supplied, classes = _inputs(train_views, test_views, supplied)
+    if rounds < 1 or batch < 1:
+        raise ValueError("rounds and batch must be positive.")
+    n, nt, nv, nc = len(supplied), test_views[0].shape[0], len(train_views), len(classes)
+    assigned = np.zeros((nv, nc, n), dtype=np.int8)
     known = supplied >= 0
-    for category in range(5):
-        assigned[:, category, known] = np.where(supplied[known] == category, 1, -1)
+    for category, label in enumerate(classes):
+        assigned[:, category, known] = np.where(supplied[known] == label, 1, -1)
     train_history, test_history, details = [], [], []
     for iteration in range(rounds + 1):
-        train_scores, test_scores = np.empty((2, n, 5)), np.empty((2, nt, 5))
-        for view in range(2):
-            for category in range(5):
+        train_scores, test_scores = np.empty((nv, n, nc)), np.empty((nv, nt, nc))
+        for view in range(nv):
+            for category in range(nc):
                 use = assigned[view, category] != 0
                 model = SVC(C=c, kernel="linear")
                 model.fit(train_views[view][use], assigned[view, category, use])
@@ -67,10 +84,12 @@ def fit_cotraining(train_views, test_views, supplied, *, c=10.0, rounds=10, batc
         if iteration == rounds:
             break
         updated = assigned.copy()
-        for student in range(2):
-            for category in range(5):
+        for student in range(nv):
+            teachers = [v for v in range(nv) if v != student]
+            for category in range(nc):
                 unknown = np.flatnonzero(assigned[student, category] == 0)
-                ranking = unknown[np.argsort(-train_scores[1 - student, unknown, category], kind="stable")]
+                scores = train_scores[teachers, :, category].mean(axis=0)
+                ranking = unknown[np.argsort(-scores[unknown], kind="stable")]
                 count = min(batch, len(ranking) // 2)
                 if count:
                     updated[student, category, ranking[:count]] = 1
@@ -84,102 +103,15 @@ def fit_colabeling(
     grouped=True, max_inner=100, tolerance=1e-5,
     progress: Callable[[str], None] | None = None,
 ) -> LearningRun:
-    """Algorithms 1-3 of Xu et al. specialized to the two-view SSL setting.
+    """BBCSport-compatible adapter around the general estimator.
 
-    No hidden labels are accepted here: supplied has category IDs for known
-    examples and -1 for all unknown examples. The test inputs are features
-    only, used exclusively to record predictions after fitting each model.
+    The reusable CoLabelingClassifier also accepts string labels, known-label
+    masks, any number of views/classes, MIL bags and ROD reference normals.
+    This adapter retains the original experiment's -1 unknown-label convention
+    and saved replay format.
     """
-    n, nt = len(supplied), len(test_views[0])
-    known_mask = supplied >= 0
-    initial_train, initial_test = _supervised_views(train_views, test_views, supplied, c)
-    kernels = [x @ x.T + 1.0 for x in train_views]
-    cross = [test_views[v] @ train_views[v].T + 1.0 for v in range(2)]
-    offsets = np.linspace(-0.1, 0.1, 11)
-    unknown_rows = np.flatnonzero(~known_mask)
-    preview_rows = unknown_rows[np.linspace(0, len(unknown_rows) - 1, 8, dtype=int)]
-    by_category = []
-    for category in range(5):
-        supplied_binary = np.zeros(n, dtype=np.int8)
-        supplied_binary[known_mask] = np.where(supplied[known_mask] == category, 1, -1)
-        prior = float((supplied[known_mask] == category).mean())
-        fractions = np.clip(prior + offsets, 0.0, 1.0)
-        candidates = [[], []]
-        metadata = [[], []]
-        seen = [set(), set()]
-
-        def append_sheets(target_view, teacher_scores, origin_round):
-            added = 0
-            for bias, fraction in enumerate(fractions):
-                sheet = project_labels(teacher_scores, supplied_binary, float(fraction))
-                # Identical kernels within the same L1 history group can be
-                # merged exactly; duplicate kernels in different bias groups
-                # stay separate because their regularization is different.
-                key = (bias, sheet.tobytes())
-                if key in seen[target_view]:
-                    continue
-                seen[target_view].add(key)
-                candidates[target_view].append(sheet)
-                metadata[target_view].append({
-                    "bias": bias, "fraction": round(float(fraction), 6),
-                    "origin_round": origin_round, "source_view": 1 - target_view,
-                })
-                added += 1
-            return added
-
-        for view in range(2):
-            append_sheets(view, initial_train[1 - view, :, category], 0)
-        history = []
-        previous_objectives = None
-        for iteration in range(1, rounds + 1):
-            trains, tests, view_details = [], [], []
-            objectives = []
-            for view in range(2):
-                sheets = np.asarray(candidates[view])
-                groups = np.array([entry["bias"] for entry in metadata[view]])
-                model = fit_mkl(
-                    kernels[view], sheets, groups, c=c, grouped=grouped,
-                    max_inner=max_inner, tolerance=tolerance,
-                )
-                trains.append(model.decision_function(kernels[view]))
-                tests.append(model.decision_function(cross[view]))
-                objectives.append(model.objective)
-                total = model.weights.sum()
-                view_details.append({
-                    "objective": model.objective, "gap": model.gap,
-                    "relative_gap": model.gap / max(-2 * model.objective, 1e-12),
-                    "inner_iterations": model.inner_iterations, "converged": model.converged,
-                    "candidate_count": len(sheets),
-                    "sheets": [dict(
-                        entry, weight=float(weight), share=float(weight / total),
-                        answers=sheets[index, preview_rows].astype(int).tolist(),
-                    ) for index, (entry, weight) in enumerate(zip(metadata[view], model.weights))],
-                })
-            history.append({"train": np.asarray(trains), "test": np.asarray(tests), "views": view_details})
-            if progress:
-                progress(f"class {category + 1}/5, round {iteration}, "
-                         f"sheets {len(candidates[0])}/{len(candidates[1])}")
-            added = sum(append_sheets(view, trains[1 - view], iteration) for view in range(2))
-            stable = previous_objectives is not None and all(
-                abs(now - old) <= 1e-6 * max(abs(old), 1e-12)
-                for now, old in zip(objectives, previous_objectives)
-            )
-            if added == 0 or stable:
-                break
-            previous_objectives = objectives
-        by_category.append(history)
-
-    total_rounds = max(len(history) for history in by_category)
-    train_history, test_history = [initial_train], [initial_test]
-    details = [{"round": 0, "preview_training_rows": preview_rows.tolist(), "categories": []}]
-    for iteration in range(total_rounds):
-        train_scores, test_scores = np.empty((2, n, 5)), np.empty((2, nt, 5))
-        categories = []
-        for category, history in enumerate(by_category):
-            state = history[min(iteration, len(history) - 1)]
-            train_scores[:, :, category], test_scores[:, :, category] = state["train"], state["test"]
-            categories.append({"category": category, "views": state["views"], "completed_rounds": len(history)})
-        train_history.append(train_scores)
-        test_history.append(test_scores)
-        details.append({"round": iteration + 1, "preview_training_rows": preview_rows.tolist(), "categories": categories})
-    return LearningRun(train_history, test_history, details)
+    train_views, test_views, supplied, _ = _inputs(train_views, test_views, supplied)
+    model = CoLabelingClassifier(layers=3 if grouped else 1, c=c, max_rounds=rounds,
+                                max_inner=max_inner, tolerance=tolerance, record_history=True)
+    model.fit(train_views, supplied, known_mask=supplied >= 0, progress=progress)
+    return LearningRun(model.train_scores_, model.score_history(test_views), model.history_, model)

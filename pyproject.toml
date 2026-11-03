@@ -1,7 +1,7 @@
 [project]
 name = "bbc-sport-co-labeling"
-version = "0.1.0"
-description = "Independent implementation of Co-Labeling for Multi-View Weakly Labeled Learning: BBCSport experiment"
+version = "0.2.0"
+description = "Independent implementation of Co-Labeling for Multi-View Weakly Labeled Learning: general SSL, MIL and ROD with a BBCSport experiment"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]

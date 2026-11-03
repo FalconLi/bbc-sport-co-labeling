@@ -1,4 +1,4 @@
-"""The paper's rho-SVM QP and two-layer MKL update, without pseudo-label voting.
+"""The paper's rho-SVM QP and hierarchical MKL, without pseudo-label voting.
 
     Q_m = (X X.T + 11.T) * (y_m y_m.T)
     alpha = argmin 0.5 alpha.T (sum_m d_m Q_m + I/C) alpha
@@ -18,6 +18,8 @@ import osqp
 from scipy import sparse
 from scipy.linalg import cho_factor, cho_solve
 from scipy.optimize import minimize
+
+from .hierarchy import KernelHierarchy
 
 
 def project_labels(scores: np.ndarray, known: np.ndarray, positive_fraction: float) -> np.ndarray:
@@ -39,15 +41,24 @@ def project_labels(scores: np.ndarray, known: np.ndarray, positive_fraction: flo
     return answer
 
 
-def mixed_norm(weights: np.ndarray, groups: np.ndarray, grouped: bool) -> float:
+def mixed_norm(weights: np.ndarray, groups: np.ndarray, grouped: bool, source_groups=None, norms=None) -> float:
+    if grouped and (norms is not None or (source_groups is not None and len(np.unique(source_groups)) > 1)):
+        sources = np.zeros(len(groups), dtype=int) if source_groups is None else source_groups
+        return KernelHierarchy(sources, groups, norms or (np.inf, 2, 1)).norm(weights)
     totals = np.bincount(groups, weights=weights)
     return float(np.linalg.norm(totals) if grouped else weights.sum())
 
 
-def update_weights(norm_squared: np.ndarray, groups: np.ndarray, grouped: bool) -> np.ndarray:
+def update_weights(norm_squared: np.ndarray, groups: np.ndarray, grouped: bool, source_groups=None, norms=None) -> np.ndarray:
     """Closed-form minimizer of Eq. (11), specializing Eq. (13)-(17)."""
     if np.any(norm_squared < 0) or not np.all(np.isfinite(norm_squared)):
         raise ValueError("Primal squared norms must be finite and nonnegative.")
+    if grouped and (norms is not None or (source_groups is not None and len(np.unique(source_groups)) > 1)):
+        sources = np.zeros(len(groups), dtype=int) if source_groups is None else source_groups
+        return KernelHierarchy(sources, groups, norms or (np.inf, 2, 1)).update(norm_squared)
+    if not np.any(norm_squared):
+        uniform = np.ones(len(groups))
+        return uniform / mixed_norm(uniform, groups, grouped)
     roots = np.sqrt(norm_squared)
     if not grouped:
         return roots / roots.sum() if roots.sum() > 0 else np.full(len(roots), 1 / len(roots))
@@ -154,6 +165,8 @@ def fit_mkl(
     grouped: bool = True,
     max_inner: int = 100,
     tolerance: float = 1e-5,
+    source_groups: np.ndarray | None = None,
+    norms: tuple[float, float, float] | None = None,
 ) -> KernelModel:
     if c <= 0 or max_inner < 1 or tolerance <= 0:
         raise ValueError("C, max_inner, and tolerance must be positive.")
@@ -164,8 +177,22 @@ def fit_mkl(
         raise ValueError("Invalid kernel or candidate dimensions/values.")
     if m < 1 or np.any(groups < 0):
         raise ValueError("At least one nonnegative group index is required.")
+    if norms is not None and not grouped:
+        raise ValueError("Custom norms require grouped=True.")
+    if not np.isfinite(kernel).all() or not np.isfinite(c) or not np.isfinite(tolerance):
+        raise ValueError("Kernel, C and tolerance must be finite.")
+    hierarchy = None
+    if source_groups is not None or norms is not None:
+        sources = np.zeros(m, dtype=int) if source_groups is None else np.asarray(source_groups)
+        candidate_hierarchy = KernelHierarchy(sources, groups, norms or (np.inf, 2, 1))
+        # Retain the exact established two-view numerical path when its source
+        # level has one node. Its full and two-layer norms are identical.
+        simple = len(candidate_hierarchy.sources) == 1 and candidate_hierarchy.norms[1:] == (2, 1)
+        if grouped and not simple:
+            hierarchy = candidate_hierarchy
+    weight_norm = hierarchy.norm if hierarchy else lambda d: mixed_norm(d, groups, grouped)
     weights = np.ones(m)
-    weights /= mixed_norm(weights, groups, grouped)
+    weights /= weight_norm(weights)
     alpha = None
     for inner in range(1, max_inner + 1):
         # Schur product identity avoids materializing M dense Q_m matrices.
@@ -176,7 +203,9 @@ def fit_mkl(
         energies = np.maximum(np.einsum("mi,mi->m", signed @ kernel, signed), 0)
         rho = float(alpha @ hessian @ alpha)
         objective = -0.5 * rho
-        if grouped:
+        if hierarchy:
+            support = hierarchy.support(energies)
+        elif grouped:
             best = np.zeros(groups.max() + 1)
             np.maximum.at(best, groups, energies)
             support = np.linalg.norm(best)
@@ -186,7 +215,8 @@ def fit_mkl(
         if gap <= tolerance * max(rho, 1e-12):
             break
         if inner < max_inner:
-            weights = update_weights(weights**2 * energies, groups, grouped)
+            weights = (hierarchy.update(weights**2 * energies) if hierarchy
+                       else update_weights(weights**2 * energies, groups, grouped))
     # Multiplicative Eq. (15)-(17) updates approach sparse weights slowly.
     # If needed, polish the SAME convex MKL objective in the low-dimensional
     # coefficient space, using exact QP values and envelope gradients. This
@@ -210,13 +240,15 @@ def fit_mkl(
             totals = np.bincount(groups, weights=d)
             return -totals[groups] / max(np.linalg.norm(totals), 1e-30)
 
+        constraint = ({"type": "ineq", "fun": hierarchy.constraints, "jac": hierarchy.constraint_jacobian}
+                      if hierarchy else {"type": "ineq", "fun": lambda d: 1 - weight_norm(d), "jac": constraint_gradient})
         polished = minimize(
             value_and_gradient, weights, jac=True, method="SLSQP", bounds=[(0, None)] * m,
-            constraints={"type": "ineq", "fun": lambda d: 1 - mixed_norm(d, groups, grouped), "jac": constraint_gradient},
+            constraints=constraint,
             options={"ftol": min(1e-13, tolerance**2 * 0.01), "maxiter": max(100, 2 * max_inner)},
         )
         proposed = np.maximum(polished.x, 0)
-        proposed /= max(mixed_norm(proposed, groups, grouped), 1e-30)
+        proposed /= max(weight_norm(proposed), 1e-30)
         value, _ = value_and_gradient(proposed)
         if value * scale <= objective + 1e-12:
             weights, alpha = proposed, cached_alpha
@@ -226,7 +258,9 @@ def fit_mkl(
             objective = -0.5 * rho
             signed = candidates * alpha[None, :]
             energies = np.maximum(np.einsum("mi,mi->m", signed @ kernel, signed), 0)
-            if grouped:
+            if hierarchy:
+                support = hierarchy.support(energies)
+            elif grouped:
                 best = np.zeros(groups.max() + 1)
                 np.maximum.at(best, groups, energies)
                 support = np.linalg.norm(best)
